@@ -1,0 +1,8 @@
+# Copy to hack/live.yaml (ignored by git), fill in your App, and run
+#   make live LIVE_CONFIG=hack/live.yaml
+owner: yuanying
+exclude: []
+github:
+  appId: 0            # the App ID on the App's settings page
+  installationId: 0   # the number at the end of the installation's settings URL
+  privateKeyFile: /path/to/release-lag.private-key.pem
