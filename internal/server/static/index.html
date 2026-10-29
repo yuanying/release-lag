@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>release-lag</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de;
+    --head: #f6f8fa; --link: #0969da; --warn: #9a6700; --warn-bg: #fff8c5;
+    --bad: #cf222e; --bad-bg: #ffebe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #8d96a0; --line: #30363d;
+      --head: #161b22; --link: #4493f8; --warn: #d29922; --warn-bg: #2e2510;
+      --bad: #f85149; --bad-bg: #3a1618;
+    }
+  }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; margin-bottom: 12px; }
+  #status { color: var(--muted); }
+  #error { color: var(--bad); background: var(--bad-bg); padding: 8px; border-radius: 6px; white-space: pre-wrap; display: none; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--head); color: var(--fg); cursor: pointer; }
+  button:disabled { cursor: progress; opacity: .6; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 10px; text-align: left; white-space: nowrap; }
+  th { background: var(--head); cursor: pointer; user-select: none; position: sticky; top: 0; }
+  th[aria-sort="ascending"]::after { content: " ▲"; }
+  th[aria-sort="descending"]::after { content: " ▼"; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 0 6px; border-radius: 10px; font-size: 12px; }
+  .unreleased { color: var(--warn); background: var(--warn-bg); }
+  .failed { color: var(--bad); background: var(--bad-bg); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>release-lag</h1>
+  <span id="status">読み込み中…</span>
+  <button id="refresh" type="button">今すぐ集計</button>
+</header>
+<p id="error"></p>
+<div class="wrap">
+<table>
+  <thead>
+    <tr>
+      <th data-key="name">リポジトリ</th>
+      <th data-key="latestTag">最新のリリース</th>
+      <th data-key="releasedAt">リリース日</th>
+      <th data-key="days" class="num">経過日数</th>
+      <th data-key="commits" class="num">以降のコミット</th>
+      <th data-key="nonRenovate" class="num">うち Renovate 以外</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+</div>
+<script>
+"use strict";
+// The page draws itself from the API, by relative paths, so it works under
+// whatever prefix it is served from.
+const reposURL = "api/repos";
+const refreshURL = "api/refresh";
+
+let data = null;
+// null keeps the API's order: never released first, then the longest
+// without a release.
+let sort = null;
+
+const fmtDate = (s) => s ? new Date(s).toLocaleDateString("ja-JP") : "";
+const fmtTime = (s) => s ? new Date(s).toLocaleString("ja-JP") : "";
+
+function el(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  for (const c of children) if (c !== null && c !== undefined) e.append(c);
+  return e;
+}
+
+function link(href, text) {
+  return href ? el("a", { href, target: "_blank", rel: "noopener" }, text) : text;
+}
+
+// Never released sorts as the longest without a release.
+const keys = {
+  name: (r) => r.name,
+  latestTag: (r) => r.latestTag || "",
+  releasedAt: (r) => r.releasedAt ? Date.parse(r.releasedAt) : -Infinity,
+  days: (r) => r.released ? (r.daysSinceRelease ?? -1) : Infinity,
+  commits: (r) => r.commitsSinceRelease ?? -1,
+  nonRenovate: (r) => r.nonRenovateCommitsSinceRelease ?? -1,
+};
+
+function sorted(repos) {
+  if (!sort) return repos;
+  const key = keys[sort.key];
+  return [...repos].sort((a, b) => {
+    const x = key(a), y = key(b);
+    const c = x < y ? -1 : x > y ? 1 : 0;
+    return sort.dir * c || a.name.localeCompare(b.name);
+  });
+}
+
+function render() {
+  const status = document.getElementById("status");
+  const error = document.getElementById("error");
+  if (!data.refreshedAt) {
+    status.textContent = "まだ集計していません";
+  } else {
+    status.textContent = `${data.owner} の ${data.repositories.length} リポジトリ・${fmtTime(data.refreshedAt)} に集計`;
+  }
+  if (data.lastError) {
+    error.textContent = `最後の集計 (${fmtTime(data.lastAttemptAt)}) に失敗しました: ${data.lastError}`;
+    error.style.display = "block";
+  } else {
+    error.style.display = "none";
+  }
+
+  for (const th of document.querySelectorAll("th[data-key]")) {
+    th.removeAttribute("aria-sort");
+    if (sort && th.dataset.key === sort.key) th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
+  }
+
+  const rows = document.getElementById("rows");
+  rows.replaceChildren(...sorted(data.repositories).map((r) => {
+    const name = el("td", null, link(r.url, r.name));
+    if (r.private) name.append(" ", el("span", { class: "muted", title: "private" }, "🔒"));
+    if (r.error) name.append(" ", el("span", { class: "badge failed", title: r.error }, "取得失敗"));
+    const tag = r.released
+      ? el("td", null, link(`${r.url}/releases/tag/${encodeURIComponent(r.latestTag)}`, r.latestTag))
+      : el("td", null, el("span", { class: "badge unreleased" }, "未リリース"));
+    const commits = r.compareUrl ? link(r.compareUrl, String(r.commitsSinceRelease)) : "";
+    return el("tr", null,
+      name,
+      tag,
+      el("td", null, fmtDate(r.releasedAt)),
+      el("td", { class: "num" }, r.daysSinceRelease ?? ""),
+      el("td", { class: "num" }, commits),
+      el("td", { class: "num" }, r.nonRenovateCommitsSinceRelease ?? ""),
+    );
+  }));
+}
+
+async function load(method, url) {
+  const res = await fetch(url, { method, headers: { Accept: "application/json" } });
+  // A failed refresh still answers with the state, as 502.
+  const body = await res.json().catch(() => null);
+  if (!body) throw new Error(`${method} ${url}: ${res.status}`);
+  data = body;
+  render();
+}
+
+function fail(err) {
+  const error = document.getElementById("error");
+  error.textContent = String(err);
+  error.style.display = "block";
+}
+
+for (const th of document.querySelectorAll("th[data-key]")) {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    // Numbers and dates start from the largest, names from A.
+    const first = key === "name" || key === "latestTag" || key === "releasedAt" ? 1 : -1;
+    sort = sort && sort.key === key ? { key, dir: -sort.dir } : { key, dir: first };
+    if (data) render();
+  });
+}
+
+document.getElementById("refresh").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  button.disabled = true;
+  try {
+    await load("POST", refreshURL);
+  } catch (err) {
+    fail(err);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+load("GET", reposURL).catch(fail);
+</script>
+</body>
+</html>
