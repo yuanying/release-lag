@@ -9,3 +9,6 @@ coverage.out
 # Editor / OS
 .DS_Store
 *.swp
+
+# Local config for `make live`; it names a private key on this machine.
+/hack/live.yaml

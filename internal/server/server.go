@@ -76,7 +76,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) repos(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.response(s.Refresher.State()))
+	writeJSON(w, http.StatusOK, s.Response(s.Refresher.State()))
 }
 
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
@@ -87,23 +87,23 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 	if !state.LastSuccess {
 		status = http.StatusBadGateway
 	}
-	writeJSON(w, status, s.response(state))
+	writeJSON(w, status, s.Response(state))
 }
 
-// reposResponse is the body of GET /api/repos and POST /api/refresh
+// ReposResponse is the body of GET /api/repos and POST /api/refresh
 // (ADR 0004).
-type reposResponse struct {
+type ReposResponse struct {
 	Owner         string         `json:"owner"`
 	RefreshedAt   *time.Time     `json:"refreshedAt"`
 	LastAttemptAt *time.Time     `json:"lastAttemptAt"`
 	LastSuccess   bool           `json:"lastSuccess"`
 	LastError     string         `json:"lastError"`
-	Repositories  []repoResponse `json:"repositories"`
+	Repositories  []RepoResponse `json:"repositories"`
 }
 
-// repoResponse is one repository. The fields about the release are null
+// RepoResponse is one repository. The fields about the release are null
 // when there is none.
-type repoResponse struct {
+type RepoResponse struct {
 	Name                           string     `json:"name"`
 	URL                            string     `json:"url"`
 	DefaultBranch                  string     `json:"defaultBranch"`
@@ -118,18 +118,19 @@ type repoResponse struct {
 	Error                          string     `json:"error,omitempty"`
 }
 
-func (s *Server) response(state lag.State) reposResponse {
+// Response is the body GET /api/repos answers with for state.
+func (s *Server) Response(state lag.State) ReposResponse {
 	now := s.now()
-	out := reposResponse{
+	out := ReposResponse{
 		Owner:         s.Owner,
 		RefreshedAt:   timePtr(state.RefreshedAt),
 		LastAttemptAt: timePtr(state.LastAttemptAt),
 		LastSuccess:   state.LastSuccess,
 		LastError:     state.LastError,
-		Repositories:  make([]repoResponse, 0, len(state.Repos)),
+		Repositories:  make([]RepoResponse, 0, len(state.Repos)),
 	}
 	for _, r := range state.Repos {
-		repo := repoResponse{
+		repo := RepoResponse{
 			Name:          r.Name,
 			URL:           r.URL,
 			DefaultBranch: r.DefaultBranch,

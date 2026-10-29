@@ -4,6 +4,10 @@
 # in while developing. Tests that need more than that go behind a build tag
 # of their own, so that `go test ./...` never picks them up.
 #
+# `make live` is the one target that talks to the real GitHub, through the
+# GitHub App the config file names. Nothing else, CI included, leaves the
+# machine.
+#
 # golangci-lint and govulncheck are declared in go.mod's tool directive and run
 # through `go tool`, so every checkout runs the same version and nothing is
 # installed globally.
@@ -71,6 +75,15 @@ vuln: ## Report known vulnerabilities in the code paths the module calls.
 .PHONY: test
 test: ## Unit tests. Need nothing but the Go toolchain.
 	$(GO) test ./...
+
+.PHONY: live
+live: ## Collect once from the real GitHub with LIVE_CONFIG and print the JSON. Not part of `make test`.
+	@if [ -z "$(LIVE_CONFIG)" ]; then \
+		echo "Set LIVE_CONFIG to a config file whose github section names your App, e.g."; \
+		echo "  make live LIVE_CONFIG=hack/live.yaml"; \
+		exit 2; \
+	fi
+	$(GO) run ./cmd/$(APP) --config="$(LIVE_CONFIG)" --once
 
 ##@ Housekeeping
 

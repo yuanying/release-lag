@@ -5,6 +5,7 @@
 package githubtest
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -109,6 +110,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests[r.URL.Path]++
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/app/installations/") && strings.HasSuffix(r.URL.Path, "/access_tokens") {
+		s.accessToken(w, r)
+		return
+	}
 	if s.Token != "" && r.Header.Get("Authorization") != "Bearer "+s.Token {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
 		return
@@ -338,6 +343,19 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request, repo *Repo, bas
 		"ahead_by":      len(all),
 		"total_commits": len(all),
 		"commits":       items,
+	})
+}
+
+// accessToken mints the installation token, Token, for any App JWT: the
+// JWT itself is githubapp's business and tested there.
+func (s *Server) accessToken(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "A JSON web token could not be decoded"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"token":      cmp.Or(s.Token, "ghs_fake"),
+		"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 	})
 }
 
