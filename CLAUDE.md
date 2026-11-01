@@ -13,7 +13,7 @@ Renovate の入ったリポジトリそれぞれについて、デフォルト�
   fleet-infra の `apps/release-lag` との契約である。変えるときは ADR と README も直し、
   fleet-infra の側にも伝える
 - アプリに認証のコードを入れない（ADR 0001）。gated の Ingress が担う
-- 追跡の範囲と「最新のリリース」「離れ具合」の定義（ADR 0002）は、週次の自動リリース
+- 追跡の範囲と「最新のリリース」「離れ具合」の定義（ADR 0002・0006）は、週次の自動リリース
   （`.github/scripts/plan-release.sh`）と同じ物差しに揃えてある
 
 ## 構成
