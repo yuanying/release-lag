@@ -76,11 +76,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		log.Error("cannot start", "error", err)
 		return 1
 	}
+	ignore, err := lag.ParseIgnore(cfg.ReleaseIgnore)
+	if err != nil {
+		log.Error("cannot start", "error", err)
+		return 1
+	}
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: &githubapp.Transport{Source: tokens}}
 	refresher := lag.NewRefresher(&lag.Collector{
 		GitHub:  github.NewClient(cfg.GitHub.APIURL, httpClient),
 		Owner:   cfg.Owner,
 		Exclude: cfg.Exclude,
+		Ignore:  ignore,
 	})
 	refresher.Log = log
 	srv := &server.Server{Refresher: refresher, Owner: cfg.Owner}

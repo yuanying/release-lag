@@ -16,10 +16,10 @@ var (
 		"Days since the latest release tag was made. Absent for a repository without one.",
 		[]string{"repo"}, nil)
 	commitsSinceRelease = prometheus.NewDesc("release_lag_commits_since_release",
-		"Commits from the latest release tag to the default branch, merge commits aside.",
+		"Commits from the latest release tag to the default branch, merge commits and those changing nothing released aside.",
 		[]string{"repo"}, nil)
 	nonRenovateCommitsSinceRelease = prometheus.NewDesc("release_lag_non_renovate_commits_since_release",
-		"Commits since the latest release tag not made by renovate[bot], merge commits aside.",
+		"Commits since the latest release tag not made by renovate[bot], merge commits and those changing nothing released aside.",
 		[]string{"repo"}, nil)
 	unreleased = prometheus.NewDesc("release_lag_unreleased",
 		"1 when the repository has no release tag, 0 when it has one.",
