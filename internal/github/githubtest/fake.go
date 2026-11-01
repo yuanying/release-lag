@@ -57,7 +57,13 @@ type Commit struct {
 	Name string
 	// Merge commits have two parents.
 	Merge bool
+	// Files are the paths the commit changes.
+	Files []string
 }
+
+// maxFiles is how many files GitHub lists for a comparison, and on each
+// page of a commit.
+const maxFiles = 300
 
 // Server is the fake GitHub.
 type Server struct {
@@ -151,6 +157,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.tagObject(w, repo, unescape(strings.TrimPrefix(rest, "git/tags/")))
 	case strings.HasPrefix(rest, "git/commits/"):
 		s.commit(w, repo, unescape(strings.TrimPrefix(rest, "git/commits/")))
+	case strings.HasPrefix(rest, "commits/"):
+		s.commitFiles(w, r, repo, unescape(strings.TrimPrefix(rest, "commits/")))
 	case strings.HasPrefix(rest, "compare/"):
 		s.compare(w, r, repo, unescape(strings.TrimPrefix(rest, "compare/")))
 	default:
@@ -338,12 +346,55 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request, repo *Repo, bas
 		})
 	}
 	items := page(s, w, r, all)
+	// GitHub lists the files the whole comparison changes on the first page
+	// only, and no more than maxFiles of them.
+	files := []map[string]any{}
+	if n, _ := strconv.Atoi(r.URL.Query().Get("page")); n <= 1 {
+		seen := map[string]bool{}
+		for _, c := range commits {
+			for _, f := range c.Files {
+				if !seen[f] && len(files) < maxFiles {
+					seen[f] = true
+					files = append(files, map[string]any{"filename": f, "status": "modified"})
+				}
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"html_url":      "https://github.com/" + repo.Owner + "/" + repo.Name + "/compare/" + basehead,
 		"ahead_by":      len(all),
 		"total_commits": len(all),
 		"commits":       items,
+		"files":         files,
 	})
+}
+
+// commitFiles answers GET /repos/{owner}/{repo}/commits/{sha} for a commit
+// of one of the comparisons, paginating its files as GitHub does.
+func (s *Server) commitFiles(w http.ResponseWriter, r *http.Request, repo *Repo, sha string) {
+	for _, commits := range repo.Compare {
+		for _, c := range commits {
+			if c.SHA != sha {
+				continue
+			}
+			files := make([]map[string]any, 0, len(c.Files))
+			for _, f := range c.Files {
+				files = append(files, map[string]any{"filename": f, "status": "modified"})
+			}
+			if r.URL.Query().Get("per_page") == "" {
+				q := r.URL.Query()
+				q.Set("per_page", strconv.Itoa(maxFiles))
+				r.URL.RawQuery = q.Encode()
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"sha":    c.SHA,
+				"commit": map[string]any{"author": map[string]any{"name": c.Name}},
+				"files":  page(s, w, r, files),
+			})
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
 }
 
 // accessToken mints the installation token, Token, for any App JWT: the

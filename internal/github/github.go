@@ -1,6 +1,7 @@
 // Package github reads what release-lag needs from GitHub's REST API: the
 // repositories an installation can see, the files at the top of a branch,
-// the tags and their dates, and the commits between two refs.
+// the tags and their dates, the commits between two refs and the files a
+// commit changes.
 package github
 
 import (
@@ -71,7 +72,14 @@ type Comparison struct {
 	HTMLURL string
 	// Commits are those reachable from head and not from base.
 	Commits []Commit
+	// Files are the paths the whole comparison changes. GitHub lists at
+	// most MaxComparisonFiles of them.
+	Files []string
 }
+
+// MaxComparisonFiles is how many changed files GitHub lists for a
+// comparison; a list this long may have been cut short.
+const MaxComparisonFiles = 300
 
 // Commit is a commit of a comparison.
 type Commit struct {
@@ -220,6 +228,9 @@ func (c *Client) Compare(ctx context.Context, owner, repo, base, head string) (*
 				} `json:"commit"`
 				Parents []json.RawMessage `json:"parents"`
 			} `json:"commits"`
+			Files []struct {
+				Filename string `json:"filename"`
+			} `json:"files"`
 		}
 		var err error
 		if next, err = c.get(ctx, next, &page); err != nil {
@@ -228,12 +239,38 @@ func (c *Client) Compare(ctx context.Context, owner, repo, base, head string) (*
 		if out.HTMLURL == "" {
 			out.HTMLURL = page.HTMLURL
 		}
+		// Only the first page lists the files, all of them for the whole
+		// comparison.
+		for _, f := range page.Files {
+			out.Files = append(out.Files, f.Filename)
+		}
 		for _, cm := range page.Commits {
 			commit := Commit{SHA: cm.SHA, AuthorName: cm.Commit.Author.Name, Parents: len(cm.Parents)}
 			if cm.Author != nil {
 				commit.Login = cm.Author.Login
 			}
 			out.Commits = append(out.Commits, commit)
+		}
+	}
+	return out, nil
+}
+
+// CommitFiles lists the paths a commit changes.
+func (c *Client) CommitFiles(ctx context.Context, owner, repo, sha string) ([]string, error) {
+	var out []string
+	next := c.repoURL(owner, repo, "commits", sha) + "?per_page=" + fmt.Sprint(perPage)
+	for next != "" {
+		var page struct {
+			Files []struct {
+				Filename string `json:"filename"`
+			} `json:"files"`
+		}
+		var err error
+		if next, err = c.get(ctx, next, &page); err != nil {
+			return nil, fmt.Errorf("reading the commit %s of %s/%s: %w", sha, owner, repo, err)
+		}
+		for _, f := range page.Files {
+			out = append(out, f.Filename)
 		}
 	}
 	return out, nil
