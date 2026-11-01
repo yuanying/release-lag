@@ -3,9 +3,12 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuanying/release-lag/internal/lag"
 )
 
 func write(t *testing.T, body string) string {
@@ -100,6 +103,42 @@ func TestLoadRejects(t *testing.T) {
 
 func TestLoadMissingFile(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml")); err == nil {
+		t.Fatal("Load succeeded")
+	}
+}
+
+func TestReleaseIgnoreDefaultsToTheCommonList(t *testing.T) {
+	c, err := Load(write(t, "owner: o\ngithub: {appId: 1, installationId: 2}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.ReleaseIgnore, lag.DefaultIgnore) {
+		t.Errorf("ReleaseIgnore = %v, want %v", c.ReleaseIgnore, lag.DefaultIgnore)
+	}
+}
+
+func TestReleaseIgnoreReplacesTheDefault(t *testing.T) {
+	c, err := Load(write(t, "owner: o\nreleaseIgnore: [docs/, '*.txt']\ngithub: {appId: 1, installationId: 2}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(c.ReleaseIgnore, ",") != "docs/,*.txt" {
+		t.Errorf("ReleaseIgnore = %v", c.ReleaseIgnore)
+	}
+}
+
+func TestAnEmptyReleaseIgnoreCountsEveryCommit(t *testing.T) {
+	c, err := Load(write(t, "owner: o\nreleaseIgnore: []\ngithub: {appId: 1, installationId: 2}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ReleaseIgnore) != 0 {
+		t.Errorf("ReleaseIgnore = %v, want none", c.ReleaseIgnore)
+	}
+}
+
+func TestABadReleaseIgnorePatternIsRejected(t *testing.T) {
+	if _, err := Load(write(t, "owner: o\nreleaseIgnore: ['[']\ngithub: {appId: 1, installationId: 2}")); err == nil {
 		t.Fatal("Load succeeded")
 	}
 }

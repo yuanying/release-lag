@@ -10,10 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/yuanying/release-lag/internal/lag"
 )
 
 const (
@@ -35,7 +38,11 @@ type Config struct {
 	Interval time.Duration `yaml:"interval"`
 	// Exclude names repositories, without the owner, never to track.
 	Exclude []string `yaml:"exclude"`
-	GitHub  GitHub   `yaml:"github"`
+	// ReleaseIgnore are the paths whose changes do not count towards a
+	// release (ADR 0006). Absent, lag.DefaultIgnore; written, it replaces
+	// the default, and an empty list counts every commit.
+	ReleaseIgnore []string `yaml:"releaseIgnore"`
+	GitHub        GitHub   `yaml:"github"`
 }
 
 // GitHub is how release-lag reaches GitHub, as a GitHub App installation.
@@ -73,6 +80,9 @@ func (c *Config) setDefaults(data []byte) {
 	if c.Interval == 0 && !hasKey(data, "interval") {
 		c.Interval = DefaultInterval
 	}
+	if c.ReleaseIgnore == nil && !hasKey(data, "releaseIgnore") {
+		c.ReleaseIgnore = slices.Clone(lag.DefaultIgnore)
+	}
 	if c.GitHub.PrivateKeyFile == "" {
 		c.GitHub.PrivateKeyFile = DefaultPrivateKeyFile
 	}
@@ -104,6 +114,9 @@ func (c *Config) validate() error {
 	}
 	if c.GitHub.InstallationID <= 0 {
 		errs = append(errs, errors.New("github.installationId is required"))
+	}
+	if _, err := lag.ParseIgnore(c.ReleaseIgnore); err != nil {
+		errs = append(errs, fmt.Errorf("releaseIgnore: %w", err))
 	}
 	return errors.Join(errs...)
 }

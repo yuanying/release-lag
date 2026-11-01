@@ -3,6 +3,7 @@ package github_test
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,5 +154,49 @@ func TestErrorStatusIsReported(t *testing.T) {
 	_, err := client(fake).ListInstallationRepositories(t.Context())
 	if err == nil {
 		t.Fatal("no error")
+	}
+}
+
+func TestCompareListsTheChangedFilesOfTheFirstPage(t *testing.T) {
+	commits := []githubtest.Commit{
+		{SHA: "a", Files: []string{"go.mod", "go.sum"}},
+		{SHA: "b", Files: []string{"README.md", "go.mod"}},
+		{SHA: "c", Files: []string{"main.go"}},
+	}
+	fake := githubtest.New(t, &githubtest.Repo{Owner: "example", Name: "app", Compare: map[string][]githubtest.Commit{"v1.0.0...main": commits}})
+	fake.PerPage = 2
+
+	cmp, err := client(fake).Compare(t.Context(), "example", "app", "v1.0.0", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Later pages list no files, and must not wipe those of the first.
+	if got := strings.Join(cmp.Files, ","); got != "go.mod,go.sum,README.md,main.go" {
+		t.Errorf("Files = %s", got)
+	}
+}
+
+func TestCommitFilesFollowsPages(t *testing.T) {
+	commits := []githubtest.Commit{{SHA: "a", Files: []string{"a.go", "b.go", "c.go", "d.go", "e.go"}}}
+	fake := githubtest.New(t, &githubtest.Repo{Owner: "example", Name: "app", Compare: map[string][]githubtest.Commit{"v1.0.0...main": commits}})
+	fake.PerPage = 2
+
+	files, err := client(fake).CommitFiles(t.Context(), "example", "app", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(files, ","); got != "a.go,b.go,c.go,d.go,e.go" {
+		t.Errorf("files = %s", got)
+	}
+	if n := fake.Requests("/repos/example/app/commits/a"); n != 3 {
+		t.Errorf("%d requests, want 3 pages", n)
+	}
+}
+
+func TestCommitFilesNotFound(t *testing.T) {
+	fake := githubtest.New(t, &githubtest.Repo{Owner: "example", Name: "app"})
+	_, err := client(fake).CommitFiles(t.Context(), "example", "app", "nope")
+	if !errors.Is(err, github.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }

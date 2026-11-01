@@ -11,12 +11,14 @@ Prometheus のメトリクスで見せる。
   Renovate の設定ファイルがあるリポジトリ。集計のたびに一覧を作り直すので、設定を足せば載り、
   消せば消える。除外の一覧も設定できる
 - 最新のリリースは、semver のタグ（`v` の有無を問わない。プレリリースは除く）のうち一番大きいもの
-- 離れ具合は、そのタグからデフォルトブランチまでのコミット数（マージコミットを除く）と、
-  そのうち `renovate[bot]` 以外の数。GitHub の compare へのリンクを添える
+- 離れ具合は、そのタグからデフォルトブランチまでのコミット数と、そのうち `renovate[bot]` 以外の数。
+  マージコミットと、リリースされるものを変えないコミット（CI・Renovate の設定・文書だけを
+  変えたものなど）は数えない。GitHub の compare へのリンクを添える
 - タグの無いリポジトリは「未リリース」として出す
 - 既定の並びは、リリースしていない期間の長い順（未リリースが先頭）
 
-定義の細部は [ADR 0002](docs/adr/0002-what-is-tracked-and-how-lag-is-measured.md) にある。
+定義の細部は [ADR 0002](docs/adr/0002-what-is-tracked-and-how-lag-is-measured.md) と
+[ADR 0006](docs/adr/0006-commits-that-change-nothing-released-are-not-counted.md) にある。
 
 ## 動かし方
 
@@ -60,7 +62,7 @@ JSON のフィールドは [ADR 0004](docs/adr/0004-config-http-api-and-metrics-
 | 名前 | 値 |
 |---|---|
 | `release_lag_days_since_release` | 最新のリリースタグの日付からの日数（タグの無いリポジトリには出ない） |
-| `release_lag_commits_since_release` | タグからデフォルトブランチまでのコミット数（マージコミットを除く） |
+| `release_lag_commits_since_release` | タグからデフォルトブランチまでのコミット数（マージコミットと、リリースされるものを変えないコミットを除く） |
 | `release_lag_non_renovate_commits_since_release` | そのうち `renovate[bot]` 以外 |
 | `release_lag_unreleased` | タグの無いリポジトリに 1、あるリポジトリに 0 |
 | `release_lag_repository_info` | 追跡しているリポジトリごとに 1。ラベルにデフォルトブランチ・最新のタグ・private か |
@@ -76,10 +78,23 @@ YAML の設定ファイルを起動時に読む。変えたらプロセス（Pod
 | `owner` | 必須 | 追跡する持ち主 |
 | `interval` | `1h` | 集計の間隔（Go の duration。`30m` など） |
 | `exclude` | 空 | 除外するリポジトリ名（owner なし）の一覧 |
+| `releaseIgnore` | 下の表 | リリースに関係の無いパスのパターンの一覧。これだけを変えたコミットは数えない。書けば既定を置き換え、`[]` で何も除外しない |
 | `github.appId` | 必須 | GitHub App の App ID |
 | `github.installationId` | 必須 | App の installation ID |
 | `github.privateKeyFile` | `/var/run/secrets/github-app/private-key.pem` | App の private key（PEM）のパス |
 | `github.apiURL` | `https://api.github.com` | GitHub の REST API。テストで偽物を指すときに使う |
+
+`releaseIgnore` のパターンは gitignore に似た書き方で、`*` などのワイルドカードが使える。
+
+| 形 | 合うもの | 例 |
+|---|---|---|
+| `/` で終わる | リポジトリ直下のそのディレクトリの下すべて | `.github/`・`docs/` |
+| `/` を含まない | どの深さでも、その名前のファイルかディレクトリ | `*.md`・`LICENSE*` |
+| それ以外 | 直下からのパス全体 | `deploy/*/README.txt` |
+
+既定は `.github/`・`.gitlab/`・`.claude/`・`docs/`・Renovate の設定ファイル（`renovate.json` など 5 つ）・
+`*.md`・`LICENSE*`・`.gitignore`・`.gitattributes`・`.editorconfig`・`.golangci.yml`・`.golangci.yaml`。
+`Makefile`・`scripts/`・`.dockerignore` は配布物に効くことがあるので入れていない。理由は ADR 0006 にある。
 
 例は [`hack/live.example.yaml`](hack/live.example.yaml) にある。
 

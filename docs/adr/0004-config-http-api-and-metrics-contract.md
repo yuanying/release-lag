@@ -30,6 +30,7 @@ configMapGenerator の hash で rollout させる）。
 | `owner` | 追跡する持ち主 | 必須 |
 | `interval` | 集計の間隔（Go の duration。`0s` などの正でない値は誤り） | `1h` |
 | `exclude` | 除外するリポジトリ名（owner なし）の一覧 | 空 |
+| `releaseIgnore` | リリースに関係の無いパスのパターンの一覧（ADR 0006）。書けば既定を置き換え、`[]` で除外なし | ADR 0006 の既定 |
 | `github.appId` | GitHub App の App ID | 必須 |
 | `github.installationId` | installation ID | 必須 |
 | `github.privateKeyFile` | private key のパス | `/var/run/secrets/github-app/private-key.pem` |
@@ -85,7 +86,7 @@ configMapGenerator の hash で rollout させる）。
 | `latestTag` | 文字列か null | 最新のリリースのタグ |
 | `releasedAt` | 時刻か null | そのタグの日付 |
 | `daysSinceRelease` | 整数か null | 応答した時刻までの経過日数（切り捨て） |
-| `commitsSinceRelease` | 整数か null | タグからデフォルトブランチまでのコミット数（マージコミットを除く） |
+| `commitsSinceRelease` | 整数か null | タグからデフォルトブランチまでのコミット数（マージコミットと、リリースされるものを変えないコミットを除く。ADR 0006） |
 | `nonRenovateCommitsSinceRelease` | 整数か null | そのうち `renovate[bot]` 以外 |
 | `compareUrl` | 文字列か null | GitHub の compare の画面 |
 | `error` | 文字列（無ければ省く） | 測れなかった理由 |
@@ -100,7 +101,7 @@ fleet-infra はこの JSON に依存しない。なつみなどが読むとき�
 | 名前 | ラベル | 値 |
 |---|---|---|
 | `release_lag_days_since_release` | `repo` | 最新のリリースのタグの日付からの日数（小数。読まれた時刻で計算する）。タグの無いリポジトリには出さない |
-| `release_lag_commits_since_release` | `repo` | タグからデフォルトブランチまでのコミット数（マージコミットを除く）。タグの無いリポジトリには出さない |
+| `release_lag_commits_since_release` | `repo` | タグからデフォルトブランチまでのコミット数（マージコミットと、リリースされるものを変えないコミットを除く。ADR 0006）。タグの無いリポジトリには出さない |
 | `release_lag_non_renovate_commits_since_release` | `repo` | そのうち `renovate[bot]` 以外 |
 | `release_lag_unreleased` | `repo` | タグの無いリポジトリに 1、あるリポジトリに 0。タグを読む前に失敗したリポジトリには出さない |
 | `release_lag_repository_info` | `repo`・`default_branch`・`latest_tag`（無ければ空）・`private`（`true`/`false`） | 追跡しているリポジトリごとに 1 |
@@ -109,6 +110,10 @@ fleet-infra はこの JSON に依存しない。なつみなどが読むとき�
 
 `release_lag_repository_info` は release-lag の作業単位が足した。ほかの名前は coordinator が
 決めたもので、変えない。ほかに Go のランタイムとプロセスの標準のメトリクスを出す。
+
+`releaseIgnore` は 2026-11-01 に ADR 0006 で足した。任意のキーなので、書いていない設定ファイルは
+そのまま動く。同じ日から、2 つのコミット数（JSON とメトリクス）は名前を変えずに意味だけが
+ADR 0006 の数え方に変わった。
 
 ## Consequences
 

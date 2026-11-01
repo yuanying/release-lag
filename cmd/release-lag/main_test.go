@@ -70,6 +70,34 @@ func TestOnceCollectsThroughTheAppAndPrintsTheRepositories(t *testing.T) {
 	}
 }
 
+func TestTheDefaultReleaseIgnoreApplies(t *testing.T) {
+	fake := githubtest.New(t, &githubtest.Repo{
+		Owner: "example-owner", Name: "app", Files: []string{"renovate.json"},
+		Tags: []githubtest.Tag{{Name: "v1.0.0"}},
+		Compare: map[string][]githubtest.Commit{"v1.0.0...main": {
+			{SHA: "1", Login: "a-person", Name: "A Person", Files: []string{".github/workflows/ci.yml"}},
+			{SHA: "2", Login: "a-person", Name: "A Person", Files: []string{"main.go", "README.md"}},
+			{SHA: "3", Login: "renovate[bot]", Name: "renovate[bot]", Files: []string{"go.mod"}},
+		}},
+	})
+	var stdout, stderr bytes.Buffer
+	if code := run(t.Context(), []string{"--config", writeConfig(t, fake.URL), "--once"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var got struct {
+		Repositories []struct {
+			Commits     int `json:"commitsSinceRelease"`
+			NonRenovate int `json:"nonRenovateCommitsSinceRelease"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("%v: %s", err, stdout.String())
+	}
+	if len(got.Repositories) != 1 || got.Repositories[0].Commits != 2 || got.Repositories[0].NonRenovate != 1 {
+		t.Errorf("got %s", stdout.String())
+	}
+}
+
 func TestOnceFailsWhenTheRefreshFails(t *testing.T) {
 	fake := githubtest.New(t)
 	fake.Fail("/installation/repositories", 500)

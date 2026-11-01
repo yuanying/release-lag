@@ -38,6 +38,7 @@ type GitHub interface {
 	ListTags(ctx context.Context, owner, repo string) ([]github.Tag, error)
 	TagDate(ctx context.Context, owner, repo string, tag github.Tag) (time.Time, error)
 	Compare(ctx context.Context, owner, repo, base, head string) (*github.Comparison, error)
+	CommitFiles(ctx context.Context, owner, repo, sha string) ([]string, error)
 }
 
 // Repo is one tracked repository and how far it is from its latest release.
@@ -52,7 +53,7 @@ type Repo struct {
 	// ReleasedAt is when LatestTag was made.
 	ReleasedAt time.Time
 	// Commits counts the commits from LatestTag to the default branch,
-	// merge commits aside.
+	// merge commits and those changing nothing released aside.
 	Commits int
 	// NonRenovateCommits counts those of Commits not made by Renovate.
 	NonRenovateCommits int
@@ -72,20 +73,42 @@ type Collector struct {
 	Owner string
 	// Exclude names repositories never to track.
 	Exclude []string
+	// Ignore matches the paths that change nothing released; commits that
+	// change only those are not counted (ADR 0006). Nil counts them all.
+	Ignore *Ignore
 	// Concurrency is how many repositories are measured at once; zero
 	// means a default.
 	Concurrency int
+
+	// collecting runs one collection at a time, for they share released.
+	collecting sync.Mutex
+	// released remembers, by repository and SHA, whether a commit changes
+	// anything released: a commit never changes, so it is read once. A
+	// collection keeps only the commits it met (seen).
+	mu       sync.Mutex
+	released map[string]bool
+	seen     map[string]bool
 }
 
 // Collect lists the repositories the installation sees, keeps those to
 // track and measures each, longest without a release first. A repository
 // that could not be measured is still returned, with its Error set, and
-// makes the returned error non-nil.
+// makes the returned error non-nil. Collections run one at a time.
 func (c *Collector) Collect(ctx context.Context) ([]Repo, error) {
+	c.collecting.Lock()
+	defer c.collecting.Unlock()
 	all, err := c.GitHub.ListInstallationRepositories(ctx)
 	if err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	c.seen = map[string]bool{}
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.released, c.seen = c.seen, nil
+	}()
 	var candidates []github.Repository
 	for _, r := range all {
 		if !strings.EqualFold(r.Owner, c.Owner) || r.Fork || r.Archived || slices.Contains(c.Exclude, r.Name) {
@@ -158,17 +181,69 @@ func (c *Collector) measure(ctx context.Context, r github.Repository) (Repo, boo
 	if err != nil {
 		return repo, true, err
 	}
-	repo.CompareURL = comparison.HTMLURL
+	// The comparison as a whole may change nothing released, and then
+	// none of its commits do. A list as long as GitHub lists may have been
+	// cut short and tells nothing.
+	if !c.Ignore.empty() && len(comparison.Files) < github.MaxComparisonFiles && !slices.ContainsFunc(comparison.Files, c.releases) {
+		repo.CompareURL = comparison.HTMLURL
+		return repo, true, nil
+	}
+	var commits, nonRenovate int
 	for _, commit := range comparison.Commits {
 		if commit.Parents > 1 {
 			continue
 		}
-		repo.Commits++
+		released, err := c.changesRelease(ctx, r, commit.SHA)
+		if err != nil {
+			return repo, true, err
+		}
+		if !released {
+			continue
+		}
+		commits++
 		if commit.Login != renovateLogin && commit.AuthorName != renovateLogin {
-			repo.NonRenovateCommits++
+			nonRenovate++
 		}
 	}
+	repo.CompareURL = comparison.HTMLURL
+	repo.Commits, repo.NonRenovateCommits = commits, nonRenovate
 	return repo, true, nil
+}
+
+// releases tells whether a change to the path goes into a release.
+func (c *Collector) releases(path string) bool {
+	return !c.Ignore.Match(path)
+}
+
+// changesRelease tells whether the commit changes anything released,
+// reading its files the first time it is asked about.
+func (c *Collector) changesRelease(ctx context.Context, r github.Repository, sha string) (bool, error) {
+	if c.Ignore.empty() {
+		return true, nil
+	}
+	key := r.Owner + "/" + r.Name + "@" + sha
+	c.mu.Lock()
+	released, known := c.released[key]
+	if !known {
+		released, known = c.seen[key]
+	}
+	if known {
+		c.seen[key] = released
+	}
+	c.mu.Unlock()
+	if known {
+		return released, nil
+	}
+
+	files, err := c.GitHub.CommitFiles(ctx, r.Owner, r.Name, sha)
+	if err != nil {
+		return false, err
+	}
+	released = slices.ContainsFunc(files, c.releases)
+	c.mu.Lock()
+	c.seen[key] = released
+	c.mu.Unlock()
+	return released, nil
 }
 
 // hasRenovateConfig looks for a Renovate config file at the top of the
